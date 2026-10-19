@@ -61,7 +61,15 @@ st.title("🛒 Sistema de Gestão - Minimercado")
 
 menu = st.sidebar.selectbox(
     "Navegação",
-    ["PDV (Saída de Estoque)", "Cadastro / Entrada de Estoque", "Posição de Estoque", "Gerenciar Produtos", "Despesas Extras", "Faturamento e Financeiro"]
+    [
+        "PDV (Saída de Estoque)", 
+        "Cadastro / Entrada de Estoque", 
+        "Posição de Estoque", 
+        "Gerenciar Produtos", 
+        "Despesas Extras", 
+        "Faturamento e Financeiro",
+        "Fechamento Diário & Curva ABC"
+    ]
 )
 
 # -------------------------------------------------------------------
@@ -161,7 +169,7 @@ if menu == "PDV (Saída de Estoque)":
                     st.balloons()
 
 # -------------------------------------------------------------------
-# 2. CADASTRO E ENTRADA DE ESTOQUE
+# 2. CADASTRO E ENTRADA DE ESTOQUE (Sem form para evitar disparo do Enter)
 # -------------------------------------------------------------------
 elif menu == "Cadastro / Entrada de Estoque":
     st.header("📦 Alimentar / Cadastrar Estoque")
@@ -171,54 +179,55 @@ elif menu == "Cadastro / Entrada de Estoque":
     opcao = st.radio("Ação", ["Novo Produto", "Adicionar Unidades / Peso a Produto Existente"])
     
     if opcao == "Novo Produto":
-        # Seleção da Unidade fora do form para atualizar os campos em tempo real
-        unidade = st.selectbox("Unidade de Medida", ["UN", "KG", "L"])
-        
-        with st.form("form_novo_prod"):
+        col1, col2 = st.columns(2)
+        with col1:
             nome = st.text_input("Nome do Produto")
             categoria = st.text_input("Categoria (ex: Bebidas, Mercearia, Frios)")
+            unidade = st.selectbox("Unidade de Medida", ["UN", "KG", "L"])
+        
+        with col2:
             custo = st.number_input(f"Custo Unitário / por {unidade} (R$)", min_value=0.0, format="%.2f")
             preco = st.number_input(f"Preço de Venda Unitário / por {unidade} (R$)", min_value=0.0, format="%.2f")
-            
-            # Campo unificado com formato decimal universal para aceitar valores como 0.500 kg ou 20 UN
             qtd_inicial = st.number_input(
-                f"Quantidade Inicial em {unidade} (ex: 0.500 para 500g ou 20 para UN)", 
+                f"Quantidade Inicial em {unidade}", 
                 min_value=0.0, 
                 step=0.100 if unidade in ["KG", "L"] else 1.0, 
                 format="%.3f" if unidade in ["KG", "L"] else "%.0f"
             )
             
-            submitted = st.form_submit_button("Salvar Produto")
-            if submitted:
-                if not nome:
-                    st.error("Informe o nome do produto.")
-                else:
-                    novo_id = int(pd.to_numeric(df_produtos['ID_Produto'], errors='coerce').max()) + 1 if not df_produtos.empty and 'ID_Produto' in df_produtos.columns and pd.to_numeric(df_produtos['ID_Produto'], errors='coerce').max() > 0 else len(df_produtos) + 1
-                    novo_registro = pd.DataFrame([{
-                        "ID_Produto": novo_id,
-                        "Nome_Produto": nome,
-                        "Categoria": categoria,
-                        "Unidade_Medida": unidade,
-                        "Custo_Unitario": custo,
-                        "Preco_Venda": preco,
-                        "Quantidade_Estoque": float(qtd_inicial),
-                        "Estoque_Minimo": 0.0
-                    }])
-                    df_atualizado = pd.concat([df_produtos, novo_registro], ignore_index=True)
-                    atualizar_aba("Produtos_Estoque", df_atualizado)
-                    
-                    df_entradas = ler_aba("Historico_Entradas")
-                    nova_entrada = pd.DataFrame([{
-                        "ID_Entrada": len(df_entradas) + 1,
-                        "Data": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "ID_Produto": novo_id,
-                        "Quantidade_Adicionada": float(qtd_inicial),
-                        "Custo_Unitario": custo
-                    }])
-                    atualizar_aba("Historico_Entradas", pd.concat([df_entradas, nova_entrada], ignore_index=True))
-                    
-                    st.success(f"✅ Produto '{nome}' cadastrado com sucesso com {qtd_inicial} {unidade}!")
-                    st.balloons()
+        if st.button("Salvar Produto", type="primary"):
+            if not nome.strip():
+                st.error("⚠️ Por favor, informe o nome do produto antes de salvar.")
+            elif preco <= 0.0 and custo <= 0.0:
+                st.warning("⚠️ Preencha os valores de custo e preço de venda.")
+            else:
+                novo_id = int(pd.to_numeric(df_produtos['ID_Produto'], errors='coerce').max()) + 1 if not df_produtos.empty and 'ID_Produto' in df_produtos.columns and pd.to_numeric(df_produtos['ID_Produto'], errors='coerce').max() > 0 else len(df_produtos) + 1
+                
+                novo_registro = pd.DataFrame([{
+                    "ID_Produto": novo_id,
+                    "Nome_Produto": nome,
+                    "Categoria": categoria,
+                    "Unidade_Medida": unidade,
+                    "Custo_Unitario": custo,
+                    "Preco_Venda": preco,
+                    "Quantidade_Estoque": float(qtd_inicial),
+                    "Estoque_Minimo": 0.0
+                }])
+                df_atualizado = pd.concat([df_produtos, novo_registro], ignore_index=True)
+                atualizar_aba("Produtos_Estoque", df_atualizado)
+                
+                df_entradas = ler_aba("Historico_Entradas")
+                nova_entrada = pd.DataFrame([{
+                    "ID_Entrada": len(df_entradas) + 1,
+                    "Data": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "ID_Produto": novo_id,
+                    "Quantidade_Adicionada": float(qtd_inicial),
+                    "Custo_Unitario": custo
+                }])
+                atualizar_aba("Historico_Entradas", pd.concat([df_entradas, nova_entrada], ignore_index=True))
+                
+                st.success(f"✅ Produto '{nome}' cadastrado com sucesso com {qtd_inicial} {unidade}!")
+                st.balloons()
 
     elif opcao == "Adicionar Unidades / Peso a Produto Existente":
         if df_produtos.empty:
@@ -236,7 +245,7 @@ elif menu == "Cadastro / Entrada de Estoque":
             else:
                 qtd_add = st.number_input(f"Quantidade a Adicionar ({unidade})", min_value=1.0, step=1.0, format="%.0f")
             
-            if st.button("Adicionar ao Estoque"):
+            if st.button("Adicionar ao Estoque", type="primary"):
                 df_produtos['Quantidade_Estoque'] = pd.to_numeric(df_produtos['Quantidade_Estoque'], errors='coerce').fillna(0.0)
                 df_produtos.loc[df_produtos['Nome_Produto'] == produto_sel, 'Quantidade_Estoque'] += float(qtd_add)
                 atualizar_aba("Produtos_Estoque", df_produtos)
@@ -295,7 +304,6 @@ elif menu == "Posição de Estoque":
             
             giro_prod = giro_mensal.get(p_id, 0.0)
             
-            # Se tem giro mensal, aplica o % do giro. Se não tem vendas no mês, aplica piso seguro de 1.0 (KG/L) ou 5 (UN)
             if giro_prod > 0:
                 limite_alerta = (pct_giro / 100.0) * giro_prod
             else:
@@ -430,7 +438,7 @@ elif menu == "Despesas Extras":
 # 6. FATURAMENTO E FINANCEIRO
 # -------------------------------------------------------------------
 elif menu == "Faturamento e Financeiro":
-    st.header("📈 Visão Financeira e Resultados (DRE)")
+    st.header("📈 Visão Financeira Geral (DRE)")
     
     df_vendas = ler_aba("Vendas")
     df_despesas = ler_aba("Despesas_Extras")
@@ -474,9 +482,9 @@ elif menu == "Faturamento e Financeiro":
     lucro_liquido = lucro_bruto - despesas_totais
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Faturamento Bruto", f"R$ {faturamento_total:.2f}")
+    c1.metric("Faturamento Bruto Acumulado", f"R$ {faturamento_total:.2f}")
     c2.metric("CMV (Custo Mercadoria Vendida)", f"R$ {cmv_total:.2f}")
-    c3.metric("Despesas Operacionais / Consumo Próprio", f"R$ {despesas_totais:.2f}")
+    c3.metric("Despesas / Consumo Próprio", f"R$ {despesas_totais:.2f}")
     c4.metric("Lucro Líquido Operacional", f"R$ {lucro_liquido:.2f}")
     
     st.divider()
@@ -491,9 +499,129 @@ elif menu == "Faturamento e Financeiro":
     
     col_vendas, col_despesas = st.columns(2)
     with col_vendas:
-        st.subheader("Histórico de Saídas (Vendas / Consumo)")
+        st.subheader("Histórico Geral de Saídas")
         st.dataframe(df_vendas, use_container_width=True)
         
     with col_despesas:
-        st.subheader("Histórico de Despesas Extras / Custos Internos")
+        st.subheader("Histórico Geral de Despesas Extras / Custos Internos")
         st.dataframe(df_despesas, use_container_width=True)
+
+# -------------------------------------------------------------------
+# 7. FECHAMENTO DIÁRIO & CURVA ABC
+# -------------------------------------------------------------------
+elif menu == "Fechamento Diário & Curva ABC":
+    st.header("📆 Fechamento Diário de Caixa & Curva ABC de Vendas")
+    
+    df_vendas = ler_aba("Vendas")
+    df_despesas = ler_aba("Despesas_Extras")
+    
+    tab_caixa, tab_abc = st.tabs(["💵 Fechamento do Dia", "📊 Curva ABC (Ranking)"])
+    
+    # --- TAB 1: FECHAMENTO DE CAIXA DIÁRIO ---
+    with tab_caixa:
+        st.subheader("🔍 Conferência Diária de Caixa")
+        
+        data_sel = st.date_input("Selecione a Data para Conferência", value=datetime.now())
+        data_str = data_sel.strftime("%Y-%m-%d")
+        
+        # Filtra vendas do dia selecionado
+        vendas_dia = pd.DataFrame()
+        faturamento_dia = 0.0
+        qtd_vendas_dia = 0
+        
+        if not df_vendas.empty:
+            df_vendas['Data_Sem_Hora'] = pd.to_datetime(df_vendas['Data_Hora'], errors='coerce').dt.strftime("%Y-%m-%d")
+            vendas_dia = df_vendas[df_vendas['Data_Sem_Hora'] == data_str]
+            
+            if not vendas_dia.empty:
+                vendas_dia['Valor_Total'] = pd.to_numeric(vendas_dia['Valor_Total'], errors='coerce').fillna(0.0)
+                vendas_normais = vendas_dia[vendas_dia['Tipo_Saida'].str.contains("Venda Normal", na=False)] if 'Tipo_Saida' in vendas_dia.columns else vendas_dia
+                faturamento_dia = vendas_normais['Valor_Total'].sum()
+                qtd_vendas_dia = len(vendas_normais)
+        
+        # Filtra despesas do dia selecionado
+        despesas_dia = pd.DataFrame()
+        total_despesas_dia = 0.0
+        
+        if not df_despesas.empty:
+            df_despesas['Data_Limpa'] = pd.to_datetime(df_despesas['Data'], errors='coerce').dt.strftime("%Y-%m-%d")
+            despesas_dia = df_despesas[df_despesas['Data_Limpa'] == data_str]
+            
+            if not despesas_dia.empty:
+                despesas_dia['Valor'] = pd.to_numeric(despesas_dia['Valor'], errors='coerce').fillna(0.0)
+                total_despesas_dia = despesas_dia['Valor'].sum()
+        
+        saldo_caixa_dia = faturamento_dia - total_despesas_dia
+        
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric(f"Faturamento em {data_sel.strftime('%d/%m/%Y')}", f"R$ {faturamento_dia:.2f}")
+        m2.metric("Total de Transações (Vendas)", f"{qtd_vendas_dia}")
+        m3.metric("Despesas / Custos do Dia", f"R$ {total_despesas_dia:.2f}")
+        m4.metric("Saldo do Caixa no Dia", f"R$ {saldo_caixa_dia:.2f}")
+        
+        st.divider()
+        
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            st.write(f"**Vendas Realizadas em {data_sel.strftime('%d/%m/%Y')}:**")
+            if not vendas_dia.empty:
+                st.dataframe(vendas_dia[['Data_Hora', 'Nome_Produto', 'Quantidade', 'Valor_Total', 'Tipo_Saida']], use_container_width=True)
+            else:
+                st.info("Nenhuma venda registrada nesta data.")
+                
+        with col_d2:
+            st.write(f"**Despesas / Ocorrências em {data_sel.strftime('%d/%m/%Y')}:**")
+            if not despesas_dia.empty:
+                st.dataframe(despesas_dia[['Data', 'Categoria_Despesa', 'Descricao', 'Valor']], use_container_width=True)
+            else:
+                st.info("Nenhuma despesa registrada nesta data.")
+
+    # --- TAB 2: CURVA ABC DE PRODUTOS ---
+    with tab_abc:
+        st.subheader("🏆 Ranking de Vendas e Curva ABC de Produtos")
+        
+        if not df_vendas.empty:
+            vendas_validas = df_vendas[df_vendas['Tipo_Saida'].str.contains("Venda Normal", na=False)] if 'Tipo_Saida' in df_vendas.columns else df_vendas
+            
+            if not vendas_validas.empty:
+                vendas_validas['Valor_Total'] = pd.to_numeric(vendas_validas['Valor_Total'], errors='coerce').fillna(0.0)
+                vendas_validas['Quantidade'] = pd.to_numeric(vendas_validas['Quantidade'], errors='coerce').fillna(0.0)
+                
+                # Agrupa por produto
+                ranking = vendas_validas.groupby('Nome_Produto').agg(
+                    Total_Faturado=('Valor_Total', 'sum'),
+                    Quantidade_Vendida=('Quantidade', 'sum')
+                ).reset_index()
+                
+                # Ordena do maior para o menor faturamento
+                ranking = ranking.sort_values(by='Total_Faturado', ascending=False)
+                
+                total_geral = ranking['Total_Faturado'].sum()
+                if total_geral > 0:
+                    ranking['% do Faturamento'] = (ranking['Total_Faturado'] / total_geral) * 100
+                    ranking['% Acumulada'] = ranking['% do Faturamento'].cumsum()
+                    
+                    # Classificação ABC
+                    # A: até 70% da receita | B: entre 70% e 90% | C: acima de 90%
+                    def classificar_abc(row):
+                        if row['% Acumulada'] <= 70:
+                            return 'Classe A (Mais Importante)'
+                        elif row['% Acumulada'] <= 90:
+                            return 'Classe B (Intermediário)'
+                        else:
+                            return 'Classe C (Menor Giro)'
+                            
+                    ranking['Classe ABC'] = ranking.apply(classificar_abc, axis=1)
+                    
+                    # Formatação visual
+                    ranking['Total_Faturado'] = ranking['Total_Faturado'].apply(lambda x: f"R$ {x:.2f}")
+                    ranking['% do Faturamento'] = ranking['% do Faturamento'].apply(lambda x: f"{x:.2f}%")
+                    ranking['% Acumulada'] = ranking['% Acumulada'].apply(lambda x: f"{x:.2f}%")
+                    
+                    st.dataframe(ranking, use_container_width=True)
+                else:
+                    st.info("Nenhuma venda faturada encontrada para gerar a curva ABC.")
+            else:
+                st.info("Nenhuma venda normal registrada ainda.")
+        else:
+            st.info("Sem dados de vendas disponíveis para análise.")
