@@ -61,14 +61,14 @@ st.title("🛒 Sistema de Gestão - Minimercado")
 
 menu = st.sidebar.selectbox(
     "Navegação",
-    ["PDV (Vendas)", "Cadastro / Entrada de Estoque", "Posição de Estoque", "Gerenciar Produtos", "Despesas Extras", "Faturamento e Financeiro"]
+    ["PDV (Saída de Estoque)", "Cadastro / Entrada de Estoque", "Posição de Estoque", "Gerenciar Produtos", "Despesas Extras", "Faturamento e Financeiro"]
 )
 
 # -------------------------------------------------------------------
-# 1. PDV (VENDAS)
+# 1. PDV (VENDAS / CONSUMO / BONIFICAÇÃO)
 # -------------------------------------------------------------------
-if menu == "PDV (Vendas)":
-    st.header("🛍️ Frente de Caixa (PDV)")
+if menu == "PDV (Saída de Estoque)":
+    st.header("🛍️ Frente de Caixa e Saída de Estoque")
     
     df_produtos = ler_aba("Produtos_Estoque")
     
@@ -77,14 +77,17 @@ if menu == "PDV (Vendas)":
     else:
         df_produtos['Quantidade_Estoque'] = pd.to_numeric(df_produtos['Quantidade_Estoque'], errors='coerce').fillna(0.0)
         df_produtos['Preco_Venda'] = pd.to_numeric(df_produtos['Preco_Venda'], errors='coerce').fillna(0.0)
+        df_produtos['Custo_Unitario'] = pd.to_numeric(df_produtos['Custo_Unitario'], errors='coerce').fillna(0.0)
         if 'Unidade_Medida' not in df_produtos.columns:
             df_produtos['Unidade_Medida'] = 'UN'
         
         produtos_disponiveis = df_produtos[df_produtos['Quantidade_Estoque'] > 0]
         
         if produtos_disponiveis.empty:
-            st.warning("Não há produtos com estoque disponível para venda.")
+            st.warning("Não há produtos com estoque disponível.")
         else:
+            tipo_operacao = st.radio("Tipo de Saída", ["🛒 Venda Normal", "🏠 Consumo Próprio / Uso Interno", "🎁 Bonificação / Cortesia"])
+            
             produto_sel = st.selectbox("Selecione o Produto", produtos_disponiveis['Nome_Produto'].tolist())
             
             if produto_sel:
@@ -92,9 +95,9 @@ if menu == "PDV (Vendas)":
                 unidade = str(item['Unidade_Medida']).upper()
                 
                 col_a, col_b, col_c = st.columns(3)
-                col_a.write(f"**Preço Unitário / Kg / L:** R$ {item['Preco_Venda']:.2f}")
-                col_b.write(f"**Estoque Disponível:** {item['Quantidade_Estoque']:.3f} {unidade}")
-                col_c.write(f"**Unidade de Medida:** {unidade}")
+                col_a.write(f"**Preço Venda:** R$ {item['Preco_Venda']:.2f}")
+                col_b.write(f"**Custo Unitário:** R$ {item['Custo_Unitario']:.2f}")
+                col_c.write(f"**Estoque Disponível:** {item['Quantidade_Estoque']:.3f} {unidade}")
                 
                 if unidade in ['KG', 'L']:
                     qtd = st.number_input(
@@ -114,28 +117,50 @@ if menu == "PDV (Vendas)":
                         step=1
                     )
                 
-                total_venda = float(qtd) * float(item['Preco_Venda'])
+                if "Venda Normal" in tipo_operacao:
+                    total_operacao = float(qtd) * float(item['Preco_Venda'])
+                    st.subheader(f"Total a Cobrar: R$ {total_operacao:.2f}")
+                else:
+                    custo_total_consumo = float(qtd) * float(item['Custo_Unitario'])
+                    st.warning(f"⚠️ **Saída sem cobrança.** Custo gerado para o caixa: **R$ {custo_total_consumo:.2f}**")
+                    total_operacao = 0.0
                 
-                st.subheader(f"Total a Pagar: R$ {total_venda:.2f}")
-                
-                if st.button("Finalizar Venda", type="primary"):
+                if st.button("Confirmar Operação", type="primary"):
+                    # 1. Registra na tabela de Vendas/Saídas
                     df_vendas = ler_aba("Vendas")
+                    if 'Tipo_Saida' not in df_vendas.columns:
+                        df_vendas['Tipo_Saida'] = "Venda Normal"
+                        
                     nova_venda = pd.DataFrame([{
                         "ID_Venda": len(df_vendas) + 1,
                         "Data_Hora": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "ID_Produto": item['ID_Produto'],
                         "Nome_Produto": item['Nome_Produto'],
                         "Quantidade": qtd,
-                        "Preco_Unitario": item['Preco_Venda'],
-                        "Valor_Total": total_venda
+                        "Preco_Unitario": item['Preco_Venda'] if "Venda Normal" in tipo_operacao else 0.0,
+                        "Valor_Total": total_operacao,
+                        "Tipo_Saida": tipo_operacao
                     }])
                     df_vendas_atualizado = pd.concat([df_vendas, nova_venda], ignore_index=True)
                     atualizar_aba("Vendas", df_vendas_atualizado)
                     
+                    # 2. Se for Consumo Próprio ou Cortesia, registra automaticamente o Custo nas Despesas Extras
+                    if "Venda Normal" not in tipo_operacao:
+                        df_despesas = ler_aba("Despesas_Extras")
+                        nova_despesa = pd.DataFrame([{
+                            "ID_Despesa": len(df_despesas) + 1,
+                            "Data": datetime.now().strftime("%Y-%m-%d"),
+                            "Categoria_Despesa": tipo_operacao.replace("🛒 ", "").replace("🏠 ", "").replace("🎁 ", ""),
+                            "Descricao": f"Custo de {qtd} {unidade} de {item['Nome_Produto']}",
+                            "Valor": float(qtd) * float(item['Custo_Unitario'])
+                        }])
+                        atualizar_aba("Despesas_Extras", pd.concat([df_despesas, nova_despesa], ignore_index=True))
+                    
+                    # 3. Baixa no estoque
                     df_produtos.loc[df_produtos['Nome_Produto'] == produto_sel, 'Quantidade_Estoque'] -= qtd
                     atualizar_aba("Produtos_Estoque", df_produtos)
                     
-                    st.success(f"✅ Venda realizada com sucesso! Total: R$ {total_venda:.2f} ({qtd} {unidade} de {produto_sel})")
+                    st.success(f"✅ Operação '{tipo_operacao}' registrada com sucesso! ({qtd} {unidade} de {produto_sel})")
                     st.balloons()
 
 # -------------------------------------------------------------------
@@ -156,13 +181,10 @@ elif menu == "Cadastro / Entrada de Estoque":
             custo = st.number_input("Custo Unitário / por Kg / por L (R$)", min_value=0.0, format="%.2f")
             preco = st.number_input("Preço de Venda Unitário / por Kg / por L (R$)", min_value=0.0, format="%.2f")
             
-            # Dinâmico conforme unidade para aceitar decimais em KG/L
             if unidade in ["KG", "L"]:
-                qtd_inicial = st.number_input(f"Quantidade Inicial em {unidade} (ex: 1.500)", min_value=0.0, step=0.100, format="%.3f")
-                est_minimo = st.number_input(f"Estoque Mínimo em {unidade} (ex: 0.500)", min_value=0.0, step=0.100, format="%.3f")
+                qtd_inicial = st.number_input(f"Quantidade Inicial em {unidade} (ex: 1.500 para 1,5kg)", min_value=0.0, step=0.100, format="%.3f")
             else:
                 qtd_inicial = st.number_input(f"Quantidade Inicial em {unidade}", min_value=0, step=1)
-                est_minimo = st.number_input(f"Estoque Mínimo em {unidade}", min_value=0, step=1)
             
             submitted = st.form_submit_button("Salvar Produto")
             if submitted:
@@ -178,12 +200,11 @@ elif menu == "Cadastro / Entrada de Estoque":
                         "Custo_Unitario": custo,
                         "Preco_Venda": preco,
                         "Quantidade_Estoque": qtd_inicial,
-                        "Estoque_Minimo": est_minimo
+                        "Estoque_Minimo": 0.0
                     }])
                     df_atualizado = pd.concat([df_produtos, novo_registro], ignore_index=True)
                     atualizar_aba("Produtos_Estoque", df_atualizado)
                     
-                    # Salva também no histórico de entradas
                     df_entradas = ler_aba("Historico_Entradas")
                     nova_entrada = pd.DataFrame([{
                         "ID_Entrada": len(df_entradas) + 1,
@@ -194,8 +215,8 @@ elif menu == "Cadastro / Entrada de Estoque":
                     }])
                     atualizar_aba("Historico_Entradas", pd.concat([df_entradas, nova_entrada], ignore_index=True))
                     
-                    st.success(f"Produto '{nome}' cadastrado com sucesso!")
-                    st.rerun()
+                    st.success(f"✅ Produto '{nome}' cadastrado com sucesso com {qtd_inicial} {unidade}!")
+                    st.balloons()
 
     elif opcao == "Adicionar Unidades / Peso a Produto Existente":
         if df_produtos.empty:
@@ -218,7 +239,6 @@ elif menu == "Cadastro / Entrada de Estoque":
                 df_produtos.loc[df_produtos['Nome_Produto'] == produto_sel, 'Quantidade_Estoque'] += qtd_add
                 atualizar_aba("Produtos_Estoque", df_produtos)
                 
-                # Registra no histórico de entradas
                 df_entradas = ler_aba("Historico_Entradas")
                 nova_entrada = pd.DataFrame([{
                     "ID_Entrada": len(df_entradas) + 1,
@@ -229,8 +249,8 @@ elif menu == "Cadastro / Entrada de Estoque":
                 }])
                 atualizar_aba("Historico_Entradas", pd.concat([df_entradas, nova_entrada], ignore_index=True))
                 
-                st.success(f"Adicionadas {qtd_add} ({unidade}) ao produto '{produto_sel}'.")
-                st.rerun()
+                st.success(f"✅ Adicionadas {qtd_add} {unidade} ao estoque de '{produto_sel}'.")
+                st.balloons()
 
 # -------------------------------------------------------------------
 # 3. POSIÇÃO DE ESTOQUE E ALERTAS INTELIGENTES
@@ -243,11 +263,7 @@ elif menu == "Posição de Estoque":
     
     if not df_produtos.empty:
         df_produtos['Quantidade_Estoque'] = pd.to_numeric(df_produtos['Quantidade_Estoque'], errors='coerce').fillna(0.0)
-        if 'Estoque_Minimo' not in df_produtos.columns:
-            df_produtos['Estoque_Minimo'] = 5.0
-        else:
-            df_produtos['Estoque_Minimo'] = pd.to_numeric(df_produtos['Estoque_Minimo'], errors='coerce').fillna(5.0)
-            
+        df_produtos['Estoque_Minimo'] = pd.to_numeric(df_produtos.get('Estoque_Minimo', 0), errors='coerce').fillna(0.0)
         if 'Unidade_Medida' not in df_produtos.columns:
             df_produtos['Unidade_Medida'] = 'UN'
 
@@ -275,14 +291,14 @@ elif menu == "Posição de Estoque":
             est_min = float(prod['Estoque_Minimo'])
             
             giro_prod = giro_mensal.get(p_id, 0.0)
-            limite_giro = (pct_giro / 100.0) * giro_prod if giro_prod > 0 else est_min
+            limite_alerta = (pct_giro / 100.0) * giro_prod if giro_prod > 0 else (est_min if est_min > 0 else 5.0)
             
-            if est_atual <= limite_giro or est_atual <= est_min:
+            if est_atual <= limite_alerta:
                 produtos_baixo.append({
                     "Nome_Produto": prod['Nome_Produto'],
                     "Estoque_Atual": est_atual,
-                    "Estoque_Minimo": est_min,
-                    "Vendas_Ultimos_30d": giro_prod,
+                    "Giro_30d": giro_prod,
+                    "Limite_Alerta": limite_alerta,
                     "Unidade": prod['Unidade_Medida']
                 })
         
@@ -317,7 +333,7 @@ elif menu == "Posição de Estoque":
                         })
 
         if produtos_baixo:
-            st.warning(f"⚠️ **Alerta de Estoque Baixo / Reposição necessária:**")
+            st.warning("⚠️ **Alerta de Estoque Baixo / Reposição necessária:**")
             st.dataframe(pd.DataFrame(produtos_baixo), use_container_width=True)
             
         if produtos_sem_saida:
@@ -351,7 +367,6 @@ elif menu == "Gerenciar Produtos":
                 novo_custo = st.number_input("Custo Unitário (R$)", min_value=0.0, value=float(item_atual['Custo_Unitario']), format="%.2f")
                 novo_preco = st.number_input("Preço de Venda (R$)", min_value=0.0, value=float(item_atual['Preco_Venda']), format="%.2f")
                 novo_est = st.number_input("Quantidade em Estoque", min_value=0.0, value=float(item_atual['Quantidade_Estoque']), format="%.3f")
-                novo_min = st.number_input("Estoque Mínimo", min_value=0.0, value=float(item_atual['Estoque_Minimo']), format="%.3f")
                 
                 col_btn1, col_btn2 = st.columns(2)
                 salvar_alt = col_btn1.form_submit_button("Salvar Alterações")
@@ -363,11 +378,10 @@ elif menu == "Gerenciar Produtos":
                     df_produtos.loc[df_produtos['Nome_Produto'] == prod_edicao, 'Custo_Unitario'] = novo_custo
                     df_produtos.loc[df_produtos['Nome_Produto'] == prod_edicao, 'Preco_Venda'] = novo_preco
                     df_produtos.loc[df_produtos['Nome_Produto'] == prod_edicao, 'Quantidade_Estoque'] = novo_est
-                    df_produtos.loc[df_produtos['Nome_Produto'] == prod_edicao, 'Estoque_Minimo'] = novo_min
                     
                     atualizar_aba("Produtos_Estoque", df_produtos)
                     st.success("Alterações salvas com sucesso!")
-                    st.rerun()
+                    st.balloons()
                     
                 if excluir_prod:
                     df_produtos = df_produtos[df_produtos['Nome_Produto'] != prod_edicao]
@@ -402,7 +416,7 @@ elif menu == "Despesas Extras":
                 df_despesas_atualizado = pd.concat([df_despesas, nova_despesa], ignore_index=True)
                 atualizar_aba("Despesas_Extras", df_despesas_atualizado)
                 st.success("Despesa salva com sucesso!")
-                st.rerun()
+                st.balloons()
 
 # -------------------------------------------------------------------
 # 6. FATURAMENTO E FINANCEIRO
@@ -420,18 +434,26 @@ elif menu == "Faturamento e Financeiro":
     valor_estoque_custo = 0.0
     valor_estoque_venda = 0.0
     
+    # Filtra apenas Vendas Normais para o Faturamento Bruto
     if not df_vendas.empty:
         df_vendas['Valor_Total'] = pd.to_numeric(df_vendas['Valor_Total'], errors='coerce').fillna(0.0)
         df_vendas['Quantidade'] = pd.to_numeric(df_vendas['Quantidade'], errors='coerce').fillna(0.0)
-        faturamento_total = df_vendas['Valor_Total'].sum()
+        
+        if 'Tipo_Saida' in df_vendas.columns:
+            vendas_reais = df_vendas[df_vendas['Tipo_Saida'].str.contains("Venda Normal", na=False)]
+            faturamento_total = vendas_reais['Valor_Total'].sum()
+        else:
+            faturamento_total = df_vendas['Valor_Total'].sum()
         
     if not df_despesas.empty:
         df_despesas['Valor'] = pd.to_numeric(df_despesas['Valor'], errors='coerce').fillna(0.0)
         despesas_totais = df_despesas['Valor'].sum()
         
+    # CMV apenas das Vendas Normais
     if not df_vendas.empty and not df_produtos.empty:
         df_produtos['Custo_Unitario'] = pd.to_numeric(df_produtos['Custo_Unitario'], errors='coerce').fillna(0.0)
-        df_merged = df_vendas.merge(df_produtos[['ID_Produto', 'Custo_Unitario']], on='ID_Produto', how='left')
+        vendas_para_cmv = df_vendas[df_vendas['Tipo_Saida'].str.contains("Venda Normal", na=False)] if 'Tipo_Saida' in df_vendas.columns else df_vendas
+        df_merged = vendas_para_cmv.merge(df_produtos[['ID_Produto', 'Custo_Unitario']], on='ID_Produto', how='left')
         cmv_total = (df_merged['Quantidade'] * df_merged['Custo_Unitario']).sum()
         
     if not df_produtos.empty:
@@ -448,7 +470,7 @@ elif menu == "Faturamento e Financeiro":
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Faturamento Bruto", f"R$ {faturamento_total:.2f}")
     c2.metric("CMV (Custo Mercadoria Vendida)", f"R$ {cmv_total:.2f}")
-    c3.metric("Despesas Extras", f"R$ {despesas_totais:.2f}")
+    c3.metric("Despesas Operacionais / Consumo Próprio", f"R$ {despesas_totais:.2f}")
     c4.metric("Lucro Líquido Operacional", f"R$ {lucro_liquido:.2f}")
     
     st.divider()
@@ -463,9 +485,10 @@ elif menu == "Faturamento e Financeiro":
     
     col_vendas, col_despesas = st.columns(2)
     with col_vendas:
-        st.subheader("Histórico de Vendas")
+        st.subheader("Histórico de Saídas (Vendas / Consumo)")
         st.dataframe(df_vendas, use_container_width=True)
         
     with col_despesas:
-        st.subheader("Histórico de Despesas")
+        st.subheader("Histórico de Despesas Extras / Custos Internos")
+        st.dataframe(df_despesas, use_container_width=True)
         st.dataframe(df_despesas, use_container_width=True)
