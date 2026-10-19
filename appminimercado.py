@@ -15,10 +15,12 @@ CREDENTIALS_PATH = "credentials.json"  # Caso rode localmente via arquivo JSON
 @st.cache_resource
 def conectar_google_sheets():
     try:
+        # Verifica se o bloco de segredos existe no Streamlit Cloud
         if "gcp_service_account" in st.secrets:
             secrets_dict = dict(st.secrets["gcp_service_account"])
             private_key_corrompida = secrets_dict["private_key"]
             
+            # Limpeza e formatação da chave privada para o gspread aceitar no Cloud
             private_key_limpa = private_key_corrompida.replace('\n', '').replace(' ', '')
             private_key_limpa = private_key_limpa.replace('-----BEGINPRIVATEKEY-----', '').replace('-----ENDPRIVATEKEY-----', '')
             
@@ -27,11 +29,19 @@ def conectar_google_sheets():
                 private_key_limpa += '=' * (4 - padding_necessario)
             
             secrets_dict["private_key"] = f"-----BEGIN PRIVATE KEY-----\n{private_key_limpa}\n-----END PRIVATE KEY-----\n"
-            gc = service_account_from_dict(secrets_dict)
-        else:
-            gc = service_account(filename=CREDENTIALS_PATH)
             
-        return gc.open(PLANILHA_NOME)
+            # Autentica via dicionário com a Service Account
+            gc = service_account_from_dict(secrets_dict)
+            
+            # Pega a URL da planilha direto dos segredos ou abre pelo nome
+            if "spreadsheet_url" in st.secrets:
+                return gc.open_by_url(st.secrets["spreadsheet_url"])
+            else:
+                return gc.open("BD_Minimercado")
+        else:
+            st.error("O bloco 'gcp_service_account' não foi encontrado nos st.secrets!")
+            return None
+            
     except Exception as e:
         st.error(f"Erro crítico na autenticação do Google Sheets: {e}")
         return None
