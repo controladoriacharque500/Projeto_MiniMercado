@@ -51,7 +51,7 @@ def ler_aba(nome_aba):
         return pd.DataFrame(dados)
     except gspread.exceptions.WorksheetNotFound:
         # Cria a aba automaticamente com colunas padrão se não existir
-        nova_ aba = sh.add_worksheet(title=nome_aba, rows="100", cols="20")
+        nova_aba = sh.add_worksheet(title=nome_aba, rows="100", cols="20")
         if nome_aba == "Usuarios":
             # Cria o usuário Admin padrão solicitado
             nova_aba.update([["Usuario", "Senha", "Perfil", "Abas_Permitidas"], 
