@@ -49,7 +49,6 @@ def ler_aba(nome_aba):
         aba = sh.worksheet(nome_aba)
         dados = aba.get_all_records()
         df = pd.DataFrame(dados)
-        # Padroniza nomes de colunas para remover espaços/acentos inconsistentes
         if not df.empty:
             df.columns = [str(c).strip() for c in df.columns]
         return df
@@ -81,30 +80,32 @@ if not st.session_state.autenticado:
     st.title("🔐 Login - Sistema de Gestão Minimercado")
     
     with st.form("form_login"):
-        user_input = st.text_input("Usuário")
-        senha_input = st.text_input("Senha", type="password")
+        user_input = st.text_input("Usuário").strip()
+        senha_input = st.text_input("Senha", type="password").strip()
         btn_login = st.form_submit_button("Entrar", type="primary")
         
         if btn_login:
             df_usuarios = ler_aba("Usuarios")
             
-            if df_usuarios.empty:
+            # Se a aba estiver totalmente vazia, cria o admin padrão
+            if df_usuarios.empty or 'Usuario' not in df_usuarios.columns:
                 df_usuarios = pd.DataFrame([{
                     "Usuario": "admin", "Senha": "4D1m206570", "Perfil": "Admin", "Abas_Permitidas": "Todas"
                 }])
                 atualizar_aba("Usuarios", df_usuarios)
             
-            # Garante a busca insensível a maiúsculas e sem espaços extras
-            col_user = "Usuario" if "Usuario" in df_usuarios.columns else df_usuarios.columns[0]
-            col_senha = "Senha" if "Senha" in df_usuarios.columns else df_usuarios.columns[1]
+            # Limpa espaços em branco dos dados vindos da planilha
+            df_usuarios['Usuario'] = df_usuarios['Usuario'].astype(str).str.strip()
+            df_usuarios['Senha'] = df_usuarios['Senha'].astype(str).str.strip()
             
-            usuario_encontrado = df_usuarios[df_usuarios[col_user].astype(str).str.strip().str.lower() == user_input.strip().lower()]
+            # Procura o usuário ignorando maiúsculas/minúsculas
+            usuario_encontrado = df_usuarios[df_usuarios['Usuario'].str.lower() == user_input.lower()]
             
             if not usuario_encontrado.empty:
-                senha_cadastrada = str(usuario_encontrado.iloc[0][col_senha]).strip()
-                if senha_input.strip() == senha_cadastrada:
+                senha_cadastrada = str(usuario_encontrado.iloc[0]['Senha'])
+                if senha_input == senha_cadastrada:
                     st.session_state.autenticado = True
-                    st.session_state.usuario_logado = user_input.strip()
+                    st.session_state.usuario_logado = user_input
                     st.session_state.perfil_logado = str(usuario_encontrado.iloc[0]['Perfil']).strip()
                     abas_str = str(usuario_encontrado.iloc[0]['Abas_Permitidas']).strip()
                     
@@ -534,7 +535,6 @@ elif menu == "Gerenciar Usuários":
                 
                 abas_string = "Todas" if perfil == "Admin" else ", ".join(lista_abas)
                 
-                # Garante que o nome da coluna seja salvo rigorosamente como "Usuario" (sem acento)
                 novo_reg = pd.DataFrame([{
                     "Usuario": novo_user.strip(),
                     "Senha": nova_senha.strip(),
