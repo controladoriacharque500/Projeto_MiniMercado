@@ -44,13 +44,15 @@ sh = conectar_google_sheets()
 if not sh:
     st.stop()
 
-def ler_aba(nome_aba, limpar_cache=False):
-    if limpar_cache:
-        st.cache_data.clear()
+def ler_aba(nome_aba):
     try:
         aba = sh.worksheet(nome_aba)
         dados = aba.get_all_records()
-        return pd.DataFrame(dados)
+        df = pd.DataFrame(dados)
+        # Padroniza nomes de colunas para remover espaços/acentos inconsistentes
+        if not df.empty:
+            df.columns = [str(c).strip() for c in df.columns]
+        return df
     except gspread.exceptions.WorksheetNotFound:
         nova_aba = sh.add_worksheet(title=nome_aba, rows="100", cols="20")
         if nome_aba == "Usuarios":
@@ -84,8 +86,7 @@ if not st.session_state.autenticado:
         btn_login = st.form_submit_button("Entrar", type="primary")
         
         if btn_login:
-            # Força limpar o cache para ler o usuário recém-criado na planilha
-            df_usuarios = ler_aba("Usuarios", limpar_cache=True)
+            df_usuarios = ler_aba("Usuarios")
             
             if df_usuarios.empty:
                 df_usuarios = pd.DataFrame([{
@@ -93,15 +94,19 @@ if not st.session_state.autenticado:
                 }])
                 atualizar_aba("Usuarios", df_usuarios)
             
-            usuario_encontrado = df_usuarios[df_usuarios['Usuario'].astype(str).str.lower() == user_input.strip().lower()]
+            # Garante a busca insensível a maiúsculas e sem espaços extras
+            col_user = "Usuario" if "Usuario" in df_usuarios.columns else df_usuarios.columns[0]
+            col_senha = "Senha" if "Senha" in df_usuarios.columns else df_usuarios.columns[1]
+            
+            usuario_encontrado = df_usuarios[df_usuarios[col_user].astype(str).str.strip().str.lower() == user_input.strip().lower()]
             
             if not usuario_encontrado.empty:
-                senha_cadastrada = str(usuario_encontrado.iloc[0]['Senha'])
-                if senha_input == senha_cadastrada:
+                senha_cadastrada = str(usuario_encontrado.iloc[0][col_senha]).strip()
+                if senha_input.strip() == senha_cadastrada:
                     st.session_state.autenticado = True
-                    st.session_state.usuario_logado = user_input
-                    st.session_state.perfil_logado = str(usuario_encontrado.iloc[0]['Perfil'])
-                    abas_str = str(usuario_encontrado.iloc[0]['Abas_Permitidas'])
+                    st.session_state.usuario_logado = user_input.strip()
+                    st.session_state.perfil_logado = str(usuario_encontrado.iloc[0]['Perfil']).strip()
+                    abas_str = str(usuario_encontrado.iloc[0]['Abas_Permitidas']).strip()
                     
                     if abas_str == "Todas":
                         st.session_state.abas_permitidas = [
@@ -136,7 +141,6 @@ if st.sidebar.button("🚪 Sair / Logout"):
 st.sidebar.divider()
 st.title("🛒 Sistema de Gestão - Minimercado")
 
-# Lista completa de módulos do sistema
 todas_abas = [
     "PDV (Saída de Estoque)", 
     "Cadastro / Entrada de Estoque", 
@@ -147,11 +151,9 @@ todas_abas = [
     "Fechamento Diário & Curva ABC"
 ]
 
-# Se for admin, adiciona a aba de cadastro de usuários no menu
 if st.session_state.perfil_logado == "Admin":
     todas_abas.append("Gerenciar Usuários")
 
-# Filtra o menu com base nas permissões do usuário logado
 abas_disponiveis = [aba for aba in todas_abas if aba in st.session_state.abas_permitidas or st.session_state.perfil_logado == "Admin"]
 
 if not abas_disponiveis:
@@ -521,7 +523,6 @@ elif menu == "Gerenciar Usuários":
             if not novo_user.strip() or not nova_senha.strip():
                 st.error("Preencha o usuário e a senha.")
             else:
-                # Monta a lista de permissões em texto separados por vírgula
                 lista_abas = []
                 if p_pdv: lista_abas.append("PDV (Saída de Estoque)")
                 if p_est: lista_abas.append("Cadastro / Entrada de Estoque")
@@ -533,6 +534,7 @@ elif menu == "Gerenciar Usuários":
                 
                 abas_string = "Todas" if perfil == "Admin" else ", ".join(lista_abas)
                 
+                # Garante que o nome da coluna seja salvo rigorosamente como "Usuario" (sem acento)
                 novo_reg = pd.DataFrame([{
                     "Usuario": novo_user.strip(),
                     "Senha": nova_senha.strip(),
