@@ -352,22 +352,25 @@ elif menu == "Cadastro / Entrada de Estoque":
                 st.success(f"✅ Adicionado com sucesso!")
 
 # -------------------------------------------------------------------
-# 3. POSIÇÃO DE ESTOQUE
+# 3. POSIÇÃO DE ESTOQUE E ALERTAS
 # -------------------------------------------------------------------
 elif menu == "Posição de Estoque":
     st.header("📊 Posição Geral do Estoque e Alertas")
+    
     df_produtos = ler_aba("Produtos_Estoque")
     df_vendas = ler_aba("Vendas")
     
     if not df_produtos.empty:
         df_produtos['Quantidade_Estoque'] = pd.to_numeric(df_produtos['Quantidade_Estoque'], errors='coerce').fillna(0.0)
         df_produtos['Estoque_Minimo'] = pd.to_numeric(df_produtos.get('Estoque_Minimo', 0), errors='coerce').fillna(0.0)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            pct_giro = st.slider("Alerta de Estoque Baixo (% do Giro)", 10, 100, 50, 5)
-        with col2:
-            dias_sem_giro = st.number_input("Dias sem Venda ('Sem Saída')", 7, 180, 30, 1)
+        if 'Unidade_Medida' not in df_produtos.columns:
+            df_produtos['Unidade_Medida'] = 'UN'
+
+        col_par1, col_par2 = st.columns(2)
+        with col_par1:
+            pct_giro = st.slider("Alerta de Estoque Baixo (% do Giro Mensal)", min_value=10, max_value=100, value=50, step=5)
+        with col_par2:
+            dias_sem_giro = st.number_input("Dias sem Venda para Considerar 'Sem Saída'", min_value=7, max_value=180, value=30, step=1)
 
         df_vendas_30d = pd.DataFrame()
         if not df_vendas.empty:
@@ -375,25 +378,78 @@ elif menu == "Posição de Estoque":
             data_limite = datetime.now(FUSO_BR).replace(tzinfo=None) - timedelta(days=30)
             df_vendas_30d = df_vendas[df_vendas['Data_Hora_dt'] >= data_limite]
         
-        giro_mensal = df_vendas_30d.groupby('ID_Produto')['Quantidade'].sum().to_dict() if not df_vendas_30d.empty else {}
-        
+        giro_mensal = {}
+        if not df_vendas_30d.empty:
+            df_vendas_30d['Quantidade'] = pd.to_numeric(df_vendas_30d['Quantidade'], errors='coerce').fillna(0.0)
+            giro_mensal = df_vendas_30d.groupby('ID_Produto')['Quantidade'].sum().to_dict()
+
         produtos_baixo = []
         for _, prod in df_produtos.iterrows():
+            p_id = prod['ID_Produto']
             est_atual = float(prod['Quantidade_Estoque'])
             est_min = float(prod['Estoque_Minimo'])
             unidade = str(prod['Unidade_Medida']).upper()
-            giro_prod = giro_mensal.get(prod['ID_Produto'], 0.0)
             
-            limite = est_min if est_min > 0 else (giro_prod * (pct_giro / 100.0) if giro_prod > 0 else (1.0 if unidade in ['KG', 'L'] else 10.0))
-            if est_atual <= limite:
-                produtos_baixo.append({"Nome_Produto": prod['Nome_Produto'], "Estoque_Atual": est_atual, "Limite": limite, "Unidade": unidade})
+            giro_prod = giro_mensal.get(p_id, 0.0)
+            
+            if est_min > 0:
+                limite_alerta = est_min
+            elif giro_prod > 0:
+                limite_alerta = giro_prod * (pct_giro / 100.0)
+            else:
+                limite_alerta = 1.0 if unidade in ['KG', 'L'] else 10.0
+            
+            if est_atual <= limite_alerta:
+                produtos_baixo.append({
+                    "Nome_Produto": prod['Nome_Produto'],
+                    "Estoque_Atual": est_atual,
+                    "Giro_30d": giro_prod,
+                    "Limite_Alerta": limite_alerta,
+                    "Unidade": unidade
+                })
+        
+        produtos_sem_saida = []
+        data_limite_sem_saida = datetime.now(FUSO_BR).replace(tzinfo=None) - timedelta(days=dias_sem_giro)
+        
+        for _, prod in df_produtos.iterrows():
+            p_id = prod['ID_Produto']
+            est_atual = float(prod['Quantidade_Estoque'])
+            
+            if est_atual > 0:
+                vendas_prod = pd.DataFrame()
+                if not df_vendas.empty:
+                    vendas_prod = df_vendas[df_vendas['ID_Produto'] == p_id]
                 
+                if vendas_prod.empty:
+                    produtos_sem_saida.append({
+                        "Nome_Produto": prod['Nome_Produto'],
+                        "Estoque_Parado": est_atual,
+                        "Unidade": prod['Unidade_Medida'],
+                        "Ultima_Venda": "Nunca Vendido"
+                    })
+                else:
+                    vendas_prod['Data_Hora_dt'] = pd.to_datetime(vendas_prod['Data_Hora'], errors='coerce')
+                    ultima_venda_dt = vendas_prod['Data_Hora_dt'].max()
+                    if pd.notnull(ultima_venda_dt) and ultima_venda_dt < data_limite_sem_saida:
+                        produtos_sem_saida.append({
+                            "Nome_Produto": prod['Nome_Produto'],
+                            "Estoque_Parado": est_atual,
+                            "Unidade": prod['Unidade_Medida'],
+                            "Ultima_Venda": ultima_venda_dt.strftime("%d/%m/%Y")
+                        })
+
         if produtos_baixo:
-            st.warning("⚠️ **Alerta de Estoque Baixo:**")
+            st.warning("⚠️ **Alerta de Estoque Baixo / Reposição necessária:**")
             st.dataframe(pd.DataFrame(produtos_baixo), use_container_width=True)
             
-        st.subheader("Estoque Completo")
+        if produtos_sem_saida:
+            st.error(f"🛑 **Alerta de Mercadorias Sem Saída (Sem vendas há {dias_sem_giro}+ dias):**")
+            st.dataframe(pd.DataFrame(produtos_sem_saida), use_container_width=True)
+
+        st.subheader("Todos os Produtos no Estoque")
         st.dataframe(df_produtos, use_container_width=True)
+    else:
+        st.info("Nenhum dado encontrado no estoque.")
 
 # -------------------------------------------------------------------
 # 4. GERENCIAR PRODUTOS
