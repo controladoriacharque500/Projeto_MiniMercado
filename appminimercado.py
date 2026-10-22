@@ -44,16 +44,16 @@ sh = conectar_google_sheets()
 if not sh:
     st.stop()
 
-def ler_aba(nome_aba):
+def ler_aba(nome_aba, limpar_cache=False):
+    if limpar_cache:
+        st.cache_data.clear()
     try:
         aba = sh.worksheet(nome_aba)
         dados = aba.get_all_records()
         return pd.DataFrame(dados)
     except gspread.exceptions.WorksheetNotFound:
-        # Cria a aba automaticamente com colunas padrão se não existir
         nova_aba = sh.add_worksheet(title=nome_aba, rows="100", cols="20")
         if nome_aba == "Usuarios":
-            # Cria o usuário Admin padrão solicitado
             nova_aba.update([["Usuario", "Senha", "Perfil", "Abas_Permitidas"], 
                              ["admin", "4D1m206570", "Admin", "Todas"]])
         return pd.DataFrame(sh.worksheet(nome_aba).get_all_records())
@@ -84,16 +84,15 @@ if not st.session_state.autenticado:
         btn_login = st.form_submit_button("Entrar", type="primary")
         
         if btn_login:
-            df_usuarios = ler_aba("Usuarios")
+            # Força limpar o cache para ler o usuário recém-criado na planilha
+            df_usuarios = ler_aba("Usuarios", limpar_cache=True)
             
-            # Se a aba estiver vazia ou sem o admin, garante o acesso mestre
             if df_usuarios.empty:
                 df_usuarios = pd.DataFrame([{
                     "Usuario": "admin", "Senha": "4D1m206570", "Perfil": "Admin", "Abas_Permitidas": "Todas"
                 }])
                 atualizar_aba("Usuarios", df_usuarios)
             
-            # Valida credenciais
             usuario_encontrado = df_usuarios[df_usuarios['Usuario'].astype(str).str.lower() == user_input.strip().lower()]
             
             if not usuario_encontrado.empty:
