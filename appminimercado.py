@@ -87,18 +87,15 @@ if not st.session_state.autenticado:
         if btn_login:
             df_usuarios = ler_aba("Usuarios")
             
-            # Se a aba estiver totalmente vazia, cria o admin padrão
             if df_usuarios.empty or 'Usuario' not in df_usuarios.columns:
                 df_usuarios = pd.DataFrame([{
                     "Usuario": "admin", "Senha": "4D1m206570", "Perfil": "Admin", "Abas_Permitidas": "Todas"
                 }])
                 atualizar_aba("Usuarios", df_usuarios)
             
-            # Limpa espaços em branco dos dados vindos da planilha
             df_usuarios['Usuario'] = df_usuarios['Usuario'].astype(str).str.strip()
             df_usuarios['Senha'] = df_usuarios['Senha'].astype(str).str.strip()
             
-            # Procura o usuário ignorando maiúsculas/minúsculas
             usuario_encontrado = df_usuarios[df_usuarios['Usuario'].str.lower() == user_input.lower()]
             
             if not usuario_encontrado.empty:
@@ -446,50 +443,163 @@ elif menu == "Despesas Extras":
             st.success("Despesa registrada!")
 
 # -------------------------------------------------------------------
-# 6. FATURAMENTO E FINANCEIRO
+# 6. FATURAMENTO E FINANCEIRO (DRE COMPLETO RESTAURADO)
 # -------------------------------------------------------------------
 elif menu == "Faturamento e Financeiro":
-    st.header("📈 Visão Financeira & Auditoria")
+    st.header("📈 Visão Financeira Geral (DRE) & Auditoria")
+    
     df_vendas = ler_aba("Vendas")
     df_despesas = ler_aba("Despesas_Extras")
+    df_produtos = ler_aba("Produtos_Estoque")
     df_canceladas = ler_aba("Vendas_Canceladas")
     
-    faturamento = df_vendas[df_vendas['Tipo_Saida'].str.contains("Venda Normal", na=False)]['Valor_Total'].astype(float).sum() if not df_vendas.empty else 0.0
-    despesas = df_despesas['Valor'].astype(float).sum() if not df_despesas.empty else 0.0
+    faturamento_total = 0.0
+    despesas_totais = 0.0
+    cmv_total = 0.0
+    valor_estoque_custo = 0.0
+    valor_estoque_venda = 0.0
     
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Faturamento Bruto", f"R$ {faturamento:.2f}")
-    c2.metric("Despesas Totais", f"R$ {despesas:.2f}")
-    c3.metric("Resultado Operacional", f"R$ {(faturamento - despesas):.2f}")
+    if not df_vendas.empty:
+        df_vendas['Valor_Total'] = pd.to_numeric(df_vendas['Valor_Total'], errors='coerce').fillna(0.0)
+        df_vendas['Quantidade'] = pd.to_numeric(df_vendas['Quantidade'], errors='coerce').fillna(0.0)
+        
+        if 'Tipo_Saida' in df_vendas.columns:
+            vendas_reais = df_vendas[df_vendas['Tipo_Saida'].str.contains("Venda Normal", na=False)]
+            faturamento_total = vendas_reais['Valor_Total'].sum()
+        else:
+            faturamento_total = df_vendas['Valor_Total'].sum()
+        
+    if not df_despesas.empty:
+        df_despesas['Valor'] = pd.to_numeric(df_despesas['Valor'], errors='coerce').fillna(0.0)
+        despesas_totais = df_despesas['Valor'].sum()
+        
+    if not df_vendas.empty and not df_produtos.empty:
+        df_produtos['Custo_Unitario'] = pd.to_numeric(df_produtos['Custo_Unitario'], errors='coerce').fillna(0.0)
+        vendas_para_cmv = df_vendas[df_vendas['Tipo_Saida'].str.contains("Venda Normal", na=False)] if 'Tipo_Saida' in df_vendas.columns else df_vendas
+        df_merged = vendas_para_cmv.merge(df_produtos[['ID_Produto', 'Custo_Unitario']], on='ID_Produto', how='left')
+        cmv_total = (df_merged['Quantidade'] * df_merged['Custo_Unitario']).sum()
+        
+    if not df_produtos.empty:
+        df_produtos['Quantidade_Estoque'] = pd.to_numeric(df_produtos['Quantidade_Estoque'], errors='coerce').fillna(0.0)
+        df_produtos['Custo_Unitario'] = pd.to_numeric(df_produtos['Custo_Unitario'], errors='coerce').fillna(0.0)
+        df_produtos['Preco_Venda'] = pd.to_numeric(df_produtos['Preco_Venda'], errors='coerce').fillna(0.0)
+        
+        valor_estoque_custo = (df_produtos['Quantidade_Estoque'] * df_produtos['Custo_Unitario']).sum()
+        valor_estoque_venda = (df_produtos['Quantidade_Estoque'] * df_produtos['Preco_Venda']).sum()
+        
+    lucro_bruto = faturamento_total - cmv_total
+    lucro_liquido = lucro_bruto - despesas_totais
+    
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Faturamento Bruto Acumulado", f"R$ {faturamento_total:.2f}")
+    c2.metric("CMV (Custo Mercadoria Vendida)", f"R$ {cmv_total:.2f}")
+    c3.metric("Despesas / Consumo Próprio", f"R$ {despesas_totais:.2f}")
+    c4.metric("Lucro Líquido Operacional", f"R$ {lucro_liquido:.2f}")
     
     st.divider()
-    st.subheader("Histórico de Vendas Ativas")
-    st.dataframe(df_vendas, use_container_width=True)
     
+    st.subheader("📦 Capital Imobilizado em Estoque")
+    e1, e2, e3 = st.columns(3)
+    e1.metric("Total Estoque (a Custo de Compra)", f"R$ {valor_estoque_custo:.2f}")
+    e2.metric("Total Estoque (a Preço de Venda)", f"R$ {valor_estoque_venda:.2f}")
+    e3.metric("Margem Potencial em Estoque", f"R$ {(valor_estoque_venda - valor_estoque_custo):.2f}")
+    
+    st.divider()
+    
+    col_vendas, col_despesas = st.columns(2)
+    with col_vendas:
+        st.subheader("Histórico Geral de Saídas Ativas")
+        st.dataframe(df_vendas, use_container_width=True)
+        
+    with col_despesas:
+        st.subheader("Histórico Geral de Despesas Extras / Custos Internos")
+        st.dataframe(df_despesas, use_container_width=True)
+        
     if not df_canceladas.empty:
-        st.subheader("🕵️ Auditoria de Vendas Canceladas")
+        st.divider()
+        st.subheader("🕵️ Histórico de Vendas Canceladas (Auditoria Gerencial)")
         st.dataframe(df_canceladas, use_container_width=True)
 
 # -------------------------------------------------------------------
-# 7. FECHAMENTO DIÁRIO & CURVA ABC
+# 7. FECHAMENTO DIÁRIO & CURVA ABC (CORRIGIDO)
 # -------------------------------------------------------------------
 elif menu == "Fechamento Diário & Curva ABC":
-    st.header("📆 Fechamento Diário & Curva ABC")
+    st.header("📆 Fechamento Diário de Caixa & Curva ABC de Vendas")
     df_vendas = ler_aba("Vendas")
-    tab1, tab2 = st.tabs(["Caixa Diário", "Curva ABC"])
+    tab1, tab2 = st.tabs(["💵 Fechamento do Dia", "📊 Curva ABC (Ranking)"])
     
     with tab1:
-        data_sel = st.date_input("Data", value=datetime.now(FUSO_BR))
+        st.subheader("🔍 Conferência Diária de Caixa")
+        data_sel = st.date_input("Selecione a Data para Conferência", value=datetime.now(FUSO_BR))
+        data_str = data_sel.strftime("%Y-%m-%d")
+        
+        faturamento_dia = 0.0
+        qtd_vendas_dia = 0
+        vendas_dia = pd.DataFrame()
+        
         if not df_vendas.empty:
             df_vendas['Data_Sem_Hora'] = pd.to_datetime(df_vendas['Data_Hora'], errors='coerce').dt.strftime("%Y-%m-%d")
-            vendas_dia = df_vendas[df_vendas['Data_Sem_Hora'] == data_sel.strftime("%Y-%m-%d")]
-            st.metric("Faturamento do Dia", f"R$ {vendas_dia['Valor_Total'].astype(float).sum():.2f}")
-            st.dataframe(vendas_dia, use_container_width=True)
+            vendas_dia = df_vendas[df_vendas['Data_Sem_Hora'] == data_str]
+            
+            if not vendas_dia.empty:
+                vendas_dia['Valor_Total'] = pd.to_numeric(vendas_dia['Valor_Total'], errors='coerce').fillna(0.0)
+                vendas_normais = vendas_dia[vendas_dia['Tipo_Saida'].str.contains("Venda Normal", na=False)] if 'Tipo_Saida' in vendas_dia.columns else vendas_dia
+                faturamento_dia = vendas_normais['Valor_Total'].sum()
+                qtd_vendas_dia = len(vendas_normais)
+        
+        st.metric(f"Faturamento em {data_sel.strftime('%d/%m/%Y')}", f"R$ {faturamento_dia:.2f}")
+        st.metric("Total de Transações (Vendas)", f"{qtd_vendas_dia}")
+        
+        st.divider()
+        st.write(f"**Vendas Realizadas em {data_sel.strftime('%d/%m/%Y')}:**")
+        if not vendas_dia.empty:
+            st.dataframe(vendas_dia[['Data_Hora', 'Nome_Produto', 'Quantidade', 'Valor_Total', 'Tipo_Saida']], use_container_width=True)
+        else:
+            st.info("Nenhuma venda registrada nesta data.")
             
     with tab2:
+        st.subheader("🏆 Ranking de Vendas e Curva ABC de Produtos")
         if not df_vendas.empty:
-            ranking = df_vendas.groupby('Nome_Produto')['Valor_Total'].astype(float).sum().reset_index().sort_values(by='Valor_Total', ascending=False)
-            st.dataframe(ranking, use_container_width=True)
+            vendas_validas = df_vendas[df_vendas['Tipo_Saida'].str.contains("Venda Normal", na=False)] if 'Tipo_Saida' in df_vendas.columns else df_vendas
+            
+            if not vendas_validas.empty:
+                vendas_validas['Valor_Total'] = pd.to_numeric(vendas_validas['Valor_Total'], errors='coerce').fillna(0.0)
+                vendas_validas['Quantidade'] = pd.to_numeric(vendas_validas['Quantidade'], errors='coerce').fillna(0.0)
+                
+                # Correção do erro do Groupby aplicando a conversão numérica antes do somatório
+                ranking = vendas_validas.groupby('Nome_Produto').agg(
+                    Total_Faturado=('Valor_Total', 'sum'),
+                    Quantidade_Vendida=('Quantidade', 'sum')
+                ).reset_index()
+                
+                ranking = ranking.sort_values(by='Total_Faturado', ascending=False)
+                
+                total_geral = ranking['Total_Faturado'].sum()
+                if total_geral > 0:
+                    ranking['% do Faturamento'] = (ranking['Total_Faturado'] / total_geral) * 100
+                    ranking['% Acumulada'] = ranking['% do Faturamento'].cumsum()
+                    
+                    def classificar_abc(row):
+                        if row['% Acumulada'] <= 70:
+                            return 'Classe A (Mais Importante)'
+                        elif row['% Acumulada'] <= 90:
+                            return 'Classe B (Intermediário)'
+                        else:
+                            return 'Classe C (Menor Giro)'
+                            
+                    ranking['Classe ABC'] = ranking.apply(classificar_abc, axis=1)
+                    
+                    ranking['Total_Faturado'] = ranking['Total_Faturado'].apply(lambda x: f"R$ {x:.2f}")
+                    ranking['% do Faturamento'] = ranking['% do Faturamento'].apply(lambda x: f"{x:.2f}%")
+                    ranking['% Acumulada'] = ranking['% Acumulada'].apply(lambda x: f"{x:.2f}%")
+                    
+                    st.dataframe(ranking, use_container_width=True)
+                else:
+                    st.info("Nenhuma venda faturada encontrada para gerar a curva ABC.")
+            else:
+                st.info("Nenhuma venda normal registrada ainda.")
+        else:
+            st.info("Sem dados de vendas disponíveis para análise.")
 
 # -------------------------------------------------------------------
 # 8. GERENCIAR USUÁRIOS (Exclusivo para Admins)
